@@ -123,7 +123,8 @@ def processor(opt):
         print('epoch:', epoch_i, 'loss:', loss_cur, "lr: {:.10f} ".format(optimizer.param_groups[0]['lr']))
         if save_model:
             # if (epoch_i + 1) % 5 == 0:
-            save_path = os.path.join('checkpoints', f'epoch_{epoch_i}.model')
+            save_path = os.path.join('checkpoints', 'cmu-umpm', f'epoch_{epoch_i}.model')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torch.save(checkpoint, save_path)
 
 
@@ -159,7 +160,7 @@ def processor(opt):
                 test_loss_cur = np.mean(test_loss_list)
 
                 if test_loss_cur < loss_min:
-                    save_path = os.path.join('Checkpoints', f'best_epoch.model')
+                    save_path = os.path.join('checkpoints', 'cmu-umpm', f'best_epoch.model')
                     torch.save(checkpoint, save_path)
                     loss_min = test_loss_cur
                     print(f"Best epoch_{checkpoint['epoch']} model is saved!")

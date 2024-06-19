@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
 
 
-    checkpoint = torch.load('./checkpoints/best_epoch.model', map_location=device)
+    checkpoint = torch.load('./checkpoints/cmu-umpm/best_epoch.model', map_location=device)
     model.load_state_dict(checkpoint['model'])
     print('[Info] Trained model loaded.')
     print(model)
