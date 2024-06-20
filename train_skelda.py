@@ -1,4 +1,6 @@
+import copy
 import os
+import sys
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import torch
@@ -8,13 +10,76 @@ import time
 import random
 import numpy as np
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+import tqdm
 from models.net import TBIFormer
 from utils.opt import Options
 from utils.soft_dtw_cuda import SoftDTW
 from utils.dataloader import Data
 from utils.metrics import FDE, JPE, APE
 from utils.TRPE import bulding_TRPE_matrix
+
+sys.path.append("/PoseForecasters/")
+import utils_pipeline
+
+# ==================================================================================================
+
+datamode = "gt-gt"
+# datamode = "pred-pred"
+
+config = {
+    "item_step": 2,
+    "window_step": 2,
+    # "item_step": 1,
+    # "window_step": 1,
+    "select_joints": [
+        "hip_middle",
+        "hip_right",
+        "knee_right",
+        "ankle_right",
+        "hip_left",
+        "knee_left",
+        "ankle_left",
+        "shoulder_middle",
+        "nose",
+        "shoulder_right",
+        "elbow_right",
+        "wrist_right",
+        "shoulder_left",
+        "elbow_left",
+        "wrist_left",
+    ],
+}
+
+# datasets_train = [
+#     "/datasets/preprocessed/mocap/train_forecast_samples_4fps.json",
+#     "/datasets/preprocessed/amass/bmlmovi_train_forecast_samples_4fps.json",
+#     "/datasets/preprocessed/amass/bmlrub_train_forecast_samples_4fps.json",
+#     "/datasets/preprocessed/amass/kit_train_forecast_samples_4fps.json"
+# ]
+
+datasets_train = [
+    # "/datasets/preprocessed/human36m/train_forecast_kppspose_10fps.json",
+    # "/datasets/preprocessed/human36m/train_forecast_kppspose_4fps.json",
+    "/datasets/preprocessed/human36m/train_forecast_kppspose.json",
+    # "/datasets/preprocessed/mocap/train_forecast_samples.json",
+]
+
+# datasets_train = [
+#     "/datasets/preprocessed/mocap/train_forecast_samples_10fps.json",
+#     "/datasets/preprocessed/amass/bmlmovi_train_forecast_samples_10fps.json",
+#     "/datasets/preprocessed/amass/bmlrub_train_forecast_samples_10fps.json",
+#     "/datasets/preprocessed/amass/kit_train_forecast_samples_10fps.json"
+# ]
+
+# dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose_10fps.json"
+# dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose_4fps.json"
+dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose.json"
+# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples.json"
+# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples_10fps.json"
+# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples_4fps.json"
+
+
+# ==================================================================================================
 
 
 def setup_seed(seed):
@@ -36,15 +101,6 @@ def temporal_partition(src, opt):
 def train(model, batch_data, opt):
     input_seq, output_seq = batch_data
     B, N, _, D = input_seq.shape
-
-    # print(input_seq.shape, output_seq.shape)
-    # print(input_seq[0,0])
-    # exit()
-
-    # import vis_skelda
-    # vis_skelda.visualize(input_seq, output_seq)
-    # exit()
-
     input_ = input_seq.view(-1, 50, input_seq.shape[-1])
     output_ = output_seq.view(output_seq.shape[0] * output_seq.shape[1], -1, input_seq.shape[-1])
     
@@ -72,6 +128,44 @@ def train(model, batch_data, opt):
     return prediction, gt, rec_loss, results
 
 
+def process_data(batch):
+
+    sequences_train = utils_pipeline.make_input_sequence(
+        batch, "input", datamode, make_relative=False
+    )
+    sequences_gt = utils_pipeline.make_input_sequence(
+        batch, "target", datamode, make_relative=False
+    )
+
+    # Convert to meters
+    sequences_train = sequences_train / 1000.0
+    sequences_gt = sequences_gt / 1000.0
+
+    # Add last input frame to the target sequence
+    sequences_gt = np.concatenate(
+        [sequences_train[:, -1:, :, :], sequences_gt], axis=1
+    )
+
+    # Switch y and z axes
+    sequences_train = sequences_train[:, :, :, [0, 2, 1]]
+    sequences_gt = sequences_gt[:, :, :, [0, 2, 1]]
+
+    # Reshape to [nbatch, npersons, nframes, njoints * 3]
+    nbatch = sequences_train.shape[0]
+    sequences_train = sequences_train.reshape(
+        [nbatch, 1, sequences_train.shape[1], -1]
+    )
+    sequences_gt = sequences_gt.reshape([nbatch, 1, sequences_gt.shape[1], -1])
+
+    # # Duplicate persons 3 times and add an x offset to each
+    # sequences_train = np.repeat(sequences_train, 3, axis=1)
+    # sequences_gt = np.repeat(sequences_gt, 3, axis=1)
+    # offsets = np.array([0, 2, -2]).reshape(1, 3, 1, 1)
+    # sequences_train[:, :, :, 0::3] += offsets
+    # sequences_gt[:, :, :, 0::3] += offsets
+
+    return sequences_train, sequences_gt
+
 
 def processor(opt):
 
@@ -79,16 +173,41 @@ def processor(opt):
 
     setup_seed(opt.seed)
     stamp = time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime(time.time()))
-    dataset = Data(dataset='mocap_umpm', mode=0, device=device, transform=False, opt=opt)
-    test_dataset = Data(dataset='mocap_umpm', mode=1, device=device, transform=False, opt=opt)
+    # dataset = Data(dataset='mocap_umpm', mode=0, device=device, transform=False, opt=opt)
+    # test_dataset = Data(dataset='mocap_umpm', mode=1, device=device, transform=False, opt=opt)
 
     print(stamp)
-    dataloader = DataLoader(dataset,
-                            batch_size=opt.train_batch,
-                            shuffle=True, drop_last=True)
-    test_dataloader = DataLoader(test_dataset,
-                                 batch_size=opt.test_batch,
-                                 shuffle=False, drop_last=True)
+    # dataloader = DataLoader(dataset,
+    #                         batch_size=opt.train_batch,
+    #                         shuffle=True, drop_last=True)
+    # test_dataloader = DataLoader(test_dataset,
+    #                              batch_size=opt.test_batch,
+    #                              shuffle=False, drop_last=True)
+
+    config["input_n"] = opt.input_time
+    config["output_n"] = opt.output_time
+
+    # Load preprocessed datasets
+    print("Loading datasets ...")
+    dataset_train, dlen_train = [], 0
+    for dp in datasets_train:
+        cfg = copy.deepcopy(config)
+        if "mocap" in dp:
+            cfg["select_joints"][cfg["select_joints"].index("nose")] = "head_upper"
+
+        ds, dlen = utils_pipeline.load_dataset(dp, "train", cfg)
+        dataset_train.extend(ds["sequences"])
+        dlen_train += dlen
+
+    esplit = "test" if "mocap" in dataset_eval_test else "eval"
+    cfg = copy.deepcopy(config)
+    if "mocap" in dataset_eval_test:
+        cfg["select_joints"][cfg["select_joints"].index("nose")] = "head_upper"
+    dataset_eval, dlen_eval = utils_pipeline.load_dataset(
+        dataset_eval_test, esplit, cfg
+    )
+    dataset_eval = dataset_eval["sequences"]
+
 
     model = TBIFormer(input_dim=opt.d_model, d_model=opt.d_model,
                         d_inner=opt.d_inner, n_layers=opt.num_stage,
@@ -115,7 +234,30 @@ def processor(opt):
            Training Processing
         ==================================
         """
-        for _, batch_data in tqdm(enumerate(dataloader)):
+        label_gen_train = utils_pipeline.create_labels_generator(dataset_train, config)
+        label_gen_eval = utils_pipeline.create_labels_generator(dataset_eval, config)
+
+        nbatch = opt.train_batch
+        for batch in tqdm.tqdm(
+            utils_pipeline.batch_iterate(label_gen_train, batch_size=nbatch),
+            total=int(dlen_train / nbatch),
+        ):
+
+            # Process data
+            sequences_train, sequences_gt = process_data(batch)
+
+            sequences_train = torch.from_numpy(sequences_train).to(device)
+            sequences_gt = torch.from_numpy(sequences_gt).to(device)
+            batch_data = [sequences_train, sequences_gt]
+
+            # print(sequences_train[0,0])
+            # print(sequences_gt[0,0])
+            # exit()
+
+            # import vis_skelda
+            # vis_skelda.visualize(sequences_train, sequences_gt)
+            # exit()
+
             _, _, loss, _ = train(model, batch_data, opt)
             optimizer.zero_grad()
             loss.backward()
@@ -132,8 +274,7 @@ def processor(opt):
         print('epoch:', epoch_i, 'loss:', loss_cur, "lr: {:.10f} ".format(optimizer.param_groups[0]['lr']))
         if save_model:
             # if (epoch_i + 1) % 5 == 0:
-            save_path = os.path.join('checkpoints', 'cmu-umpm', f'epoch_{epoch_i}.model')
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            save_path = os.path.join('checkpoints', f'epoch_{epoch_i}.model')
             torch.save(checkpoint, save_path)
 
 
@@ -153,7 +294,20 @@ def processor(opt):
                   """
                 model.eval()
                 print("\033[0:35mEvaluating.....\033[m")
-                for _, batch_data in tqdm(enumerate(test_dataloader)):
+
+                nbatch = opt.train_batch
+                for batch in tqdm.tqdm(
+                    utils_pipeline.batch_iterate(label_gen_eval, batch_size=nbatch),
+                    total=int(dlen_eval / nbatch),
+                ):
+
+                    # Process data
+                    sequences_train, sequences_gt = process_data(batch)
+
+                    sequences_train = torch.from_numpy(sequences_train).to(device)
+                    sequences_gt = torch.from_numpy(sequences_gt).to(device)
+                    batch_data = [sequences_train, sequences_gt]
+
                     n += 1
                     prediction, gt, test_loss, _ = train(model, batch_data, opt)
                     test_loss_list.append(test_loss.item())
@@ -169,7 +323,7 @@ def processor(opt):
                 test_loss_cur = np.mean(test_loss_list)
 
                 if test_loss_cur < loss_min:
-                    save_path = os.path.join('checkpoints', 'cmu-umpm', f'best_epoch.model')
+                    save_path = os.path.join('checkpoints', "h36m-25fps-1s", f'best_epoch.model')
                     torch.save(checkpoint, save_path)
                     loss_min = test_loss_cur
                     print(f"Best epoch_{checkpoint['epoch']} model is saved!")
@@ -202,8 +356,3 @@ def processor(opt):
 if __name__ == '__main__':
     option = Options().parse()
     processor(option)
-
-
-
-
-
