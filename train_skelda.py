@@ -26,57 +26,33 @@ import utils_pipeline
 datamode = "gt-gt"
 # datamode = "pred-pred"
 
-config = {
+sconfig = {
     "item_step": 2,
     "window_step": 2,
     # "item_step": 1,
     # "window_step": 1,
     "select_joints": [
-        "hip_middle",
         "hip_right",
-        "knee_right",
-        "ankle_right",
         "hip_left",
+        "knee_right",
         "knee_left",
+        "ankle_right",
         "ankle_left",
-        "shoulder_middle",
         "nose",
         "shoulder_right",
-        "elbow_right",
-        "wrist_right",
         "shoulder_left",
+        "elbow_right",
         "elbow_left",
+        "wrist_right",
         "wrist_left",
     ],
 }
 
-# datasets_train = [
-#     "/datasets/preprocessed/mocap/train_forecast_samples_4fps.json",
-#     "/datasets/preprocessed/amass/bmlmovi_train_forecast_samples_4fps.json",
-#     "/datasets/preprocessed/amass/bmlrub_train_forecast_samples_4fps.json",
-#     "/datasets/preprocessed/amass/kit_train_forecast_samples_4fps.json"
-# ]
-
 datasets_train = [
-    # "/datasets/preprocessed/human36m/train_forecast_kppspose_10fps.json",
-    # "/datasets/preprocessed/human36m/train_forecast_kppspose_4fps.json",
-    "/datasets/preprocessed/human36m/train_forecast_kppspose.json",
-    # "/datasets/preprocessed/mocap/train_forecast_samples.json",
+    "/datasets/preprocessed/human36m/train_forecast_rpt.json",
 ]
 
-# datasets_train = [
-#     "/datasets/preprocessed/mocap/train_forecast_samples_10fps.json",
-#     "/datasets/preprocessed/amass/bmlmovi_train_forecast_samples_10fps.json",
-#     "/datasets/preprocessed/amass/bmlrub_train_forecast_samples_10fps.json",
-#     "/datasets/preprocessed/amass/kit_train_forecast_samples_10fps.json"
-# ]
-
-# dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose_10fps.json"
-# dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose_4fps.json"
-dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_kppspose.json"
-# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples.json"
-# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples_10fps.json"
-# dataset_eval_test = "/datasets/preprocessed/mocap/{}_forecast_samples_4fps.json"
+dataset_eval_test = "/datasets/preprocessed/human36m/{}_forecast_rpt.json"
 
 
 # ==================================================================================================
@@ -104,7 +80,7 @@ def train(model, batch_data, opt):
     input_ = input_seq.view(-1, 50, input_seq.shape[-1])
     output_ = output_seq.view(output_seq.shape[0] * output_seq.shape[1], -1, input_seq.shape[-1])
     
-    trj_dist = bulding_TRPE_matrix(input_seq.reshape(B,N,-1,15,3), opt)  #  trajectory similarity distance
+    trj_dist = bulding_TRPE_matrix(input_seq.reshape(B,N,-1,13,3), opt)  #  trajectory similarity distance
 
     offset = input_[:, 1:50, :] - input_[:, :49, :]  #   dispacement sequence
     src = dct.dct(offset)
@@ -116,14 +92,14 @@ def train(model, batch_data, opt):
         results = torch.cat(
             [results, output_[:, :1, :] + torch.sum(rec[:, :i, :], dim=1, keepdim=True)],
             dim=1)
-    results = results[:, 1:, :]  # 3 15 45
+    results = results[:, 1:, :]  # 3 13 45
 
     rec_loss = torch.mean((rec[:, :25, :] - (output_[:, 1:26, :] - output_[:, :25, :])) ** 2)
 
 
 
-    prediction = results.view(B, N, -1, 15, 3)
-    gt = output_.view(B, N, -1, 15, 3)[:,:,1:,...]
+    prediction = results.view(B, N, -1, 13, 3)
+    gt = output_.view(B, N, -1, 13, 3)[:,:,1:,...]
 
     return prediction, gt, rec_loss, results
 
@@ -136,10 +112,6 @@ def process_data(batch):
     sequences_gt = utils_pipeline.make_input_sequence(
         batch, "target", datamode, make_relative=False
     )
-
-    # Convert to meters
-    sequences_train = sequences_train / 1000.0
-    sequences_gt = sequences_gt / 1000.0
 
     # Add last input frame to the target sequence
     sequences_gt = np.concatenate(
@@ -184,29 +156,27 @@ def processor(opt):
     #                              batch_size=opt.test_batch,
     #                              shuffle=False, drop_last=True)
 
-    config["input_n"] = opt.input_time
-    config["output_n"] = opt.output_time
+    sconfig["input_n"] = opt.input_time
+    sconfig["output_n"] = opt.output_time
+    opt.joint_dim = len(sconfig["select_joints"]) * 3
 
     # Load preprocessed datasets
     print("Loading datasets ...")
-    dataset_train, dlen_train = [], 0
-    for dp in datasets_train:
-        cfg = copy.deepcopy(config)
-        if "mocap" in dp:
-            cfg["select_joints"][cfg["select_joints"].index("nose")] = "head_upper"
-
-        ds, dlen = utils_pipeline.load_dataset(dp, "train", cfg)
-        dataset_train.extend(ds["sequences"])
-        dlen_train += dlen
-
-    esplit = "test" if "mocap" in dataset_eval_test else "eval"
-    cfg = copy.deepcopy(config)
-    if "mocap" in dataset_eval_test:
-        cfg["select_joints"][cfg["select_joints"].index("nose")] = "head_upper"
-    dataset_eval, dlen_eval = utils_pipeline.load_dataset(
-        dataset_eval_test, esplit, cfg
-    )
-    dataset_eval = dataset_eval["sequences"]
+    if opt.ckpt_load_path != "":
+        dataset_test, dlen_test = utils_pipeline.load_dataset(
+            dataset_eval_test.format("test"), "test", sconfig
+        )
+        dataset_test = dataset_test["sequences"]
+    else:
+        dataset_train, dlen_train = [], 0
+        for dp in datasets_train:
+            ds, dlen = utils_pipeline.load_dataset(dp, "train", sconfig)
+            dataset_train.extend(ds["sequences"])
+            dlen_train += dlen
+        dataset_eval, dlen_eval = utils_pipeline.load_dataset(
+            dataset_eval_test.format("eval"), "eval", sconfig
+        )
+        dataset_eval = dataset_eval["sequences"]
 
 
     model = TBIFormer(input_dim=opt.d_model, d_model=opt.d_model,
@@ -216,6 +186,45 @@ def processor(opt):
 
 
     print(">>> training params: {:.2f}M".format(sum(p.numel() for p in model.parameters() if p.requires_grad) / 1000000.0))
+
+    if opt.ckpt_load_path != "":
+        opt.test_batch = 1
+        optimizer = None
+
+        checkpoint = torch.load(opt.ckpt_load_path, map_location=device)
+        model.load_state_dict(checkpoint['model'])
+        model.eval()
+
+        label_gen_test = utils_pipeline.create_labels_generator(dataset_test, sconfig)
+
+        frame_idx = [5, 10, 15, 20, 25]
+        n = 0
+        jpe_err_total = np.arange(len(frame_idx), dtype = np.float_)
+
+        with torch.no_grad():
+
+            nbatch = opt.test_batch
+            for batch in tqdm.tqdm(
+                utils_pipeline.batch_iterate(label_gen_test, batch_size=nbatch),
+                total=int(dlen_test / nbatch),
+            ):
+
+                # Process data
+                sequences_train, sequences_gt = process_data(batch)
+
+                sequences_train = torch.from_numpy(sequences_train).to(device)
+                sequences_gt = torch.from_numpy(sequences_gt).to(device)
+                batch_data = [sequences_train, sequences_gt]
+
+                prediction, gt, test_loss, _ = train(model, batch_data, opt)
+                jpe_err = JPE(gt, prediction, frame_idx)
+
+                jpe_err_total += jpe_err
+                n += nbatch
+
+        print("=== JPE Test Error ===")
+        print([jpe / n for jpe in jpe_err_total])
+        exit()
 
     Evaluate = True
     save_model = True
@@ -234,8 +243,8 @@ def processor(opt):
            Training Processing
         ==================================
         """
-        label_gen_train = utils_pipeline.create_labels_generator(dataset_train, config)
-        label_gen_eval = utils_pipeline.create_labels_generator(dataset_eval, config)
+        label_gen_train = utils_pipeline.create_labels_generator(dataset_train, sconfig)
+        label_gen_eval = utils_pipeline.create_labels_generator(dataset_eval, sconfig)
 
         nbatch = opt.train_batch
         for batch in tqdm.tqdm(

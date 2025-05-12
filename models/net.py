@@ -158,6 +158,7 @@ class TBIFormer(nn.Module):
         self.kernel_size = opt.kernel_size
         self.device = device
         self.d_model = d_model
+        joint_dim = opt.joint_dim if opt.joint_dim else 45
 
         self.conv2d = nn.Sequential(nn.Conv2d(in_channels=3, out_channels=input_dim, kernel_size=(1, opt.kernel_size), stride=(1, 1), bias=False),
                                 nn.ReLU(inplace=False))
@@ -174,7 +175,7 @@ class TBIFormer(nn.Module):
             kernel_size2 =  int(kernel_size/2)
         else:
             kernel_size2 =  int(kernel_size/2+1)
-        self.mlp = nn.Sequential(nn.Conv1d(in_channels=45, out_channels=d_model, kernel_size=kernel_size1,
+        self.mlp = nn.Sequential(nn.Conv1d(in_channels=joint_dim, out_channels=d_model, kernel_size=kernel_size1,
                                              bias=False),
                                    nn.ReLU(inplace=False),
                                    nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=kernel_size2,
@@ -183,7 +184,7 @@ class TBIFormer(nn.Module):
 
         
         
-        self.proj_inverse=nn.Linear(d_model, 45)
+        self.proj_inverse=nn.Linear(d_model, joint_dim)
         self.l1=nn.Linear(d_model, d_model*8)
         self.l2=nn.Linear(d_model*8, d_model*25)
         
@@ -202,12 +203,14 @@ class TBIFormer(nn.Module):
         '''
         src_seq:  B*N, T, J*3
         '''
-
         bn = src.shape[0]
         bs = int(bn / n_person)
 
         # ====== Temporal Body Partition Module =========
-        index = [[8, 9, 10], [11, 12, 13], [1, 2, 3], [4, 5, 6], [0, 7, 14]]  # 5 body parts
+        if src.shape[2] == 39:
+            index = [[8, 10, 12], [7, 9, 11], [1, 3, 5], [0, 2, 4], [0, 6, 8]]  # 5 body parts
+        else:
+            index = [[8, 9, 10], [11, 12, 13], [1, 2, 3], [4, 5, 6], [0, 7, 14]]  # 5 body parts
         part_seq = body_partition(src, index).permute(0, 3, 2, 1)
         mpbp_seq = self.conv2d(part_seq).permute(0, 2, 3, 1).reshape(bs, n_person, 5, -1, 128)    #  multi-person body parts sequence
  

@@ -52,6 +52,8 @@ class Options:
         self.parser.add_argument('--device', type=str, default='cuda:0')
         self.parser.add_argument('--seed', type=int, default=9)
         self.parser.add_argument('--theta', type=int, default=2000)
+        self.parser.add_argument('--ckpt_load_path', type=str, default="")
+
 
     def _print(self):
         print("\n==================Options=================")
