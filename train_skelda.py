@@ -77,6 +77,15 @@ def temporal_partition(src, opt):
 def train(model, batch_data, opt):
     input_seq, output_seq = batch_data
     B, N, _, D = input_seq.shape
+
+    # print(input_seq.shape, output_seq.shape)
+    # print(input_seq[0,0])
+    # # exit()
+
+    # import vis_skelda
+    # vis_skelda.visualize(input_seq, output_seq)
+    # exit()
+
     input_ = input_seq.view(-1, 50, input_seq.shape[-1])
     output_ = output_seq.view(output_seq.shape[0] * output_seq.shape[1], -1, input_seq.shape[-1])
     
@@ -258,14 +267,6 @@ def processor(opt):
             sequences_train = torch.from_numpy(sequences_train).to(device)
             sequences_gt = torch.from_numpy(sequences_gt).to(device)
             batch_data = [sequences_train, sequences_gt]
-
-            # print(sequences_train[0,0])
-            # print(sequences_gt[0,0])
-            # exit()
-
-            # import vis_skelda
-            # vis_skelda.visualize(sequences_train, sequences_gt)
-            # exit()
 
             _, _, loss, _ = train(model, batch_data, opt)
             optimizer.zero_grad()

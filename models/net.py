@@ -158,7 +158,7 @@ class TBIFormer(nn.Module):
         self.kernel_size = opt.kernel_size
         self.device = device
         self.d_model = d_model
-        joint_dim = opt.joint_dim if opt.joint_dim else 45
+        joint_dim = opt.joint_dim if hasattr(opt, 'joint_dim') else 45
 
         self.conv2d = nn.Sequential(nn.Conv2d(in_channels=3, out_channels=input_dim, kernel_size=(1, opt.kernel_size), stride=(1, 1), bias=False),
                                 nn.ReLU(inplace=False))

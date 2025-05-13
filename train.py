@@ -39,7 +39,7 @@ def train(model, batch_data, opt):
 
     # print(input_seq.shape, output_seq.shape)
     # print(input_seq[0,0])
-    # exit()
+    # # exit()
 
     # import vis_skelda
     # vis_skelda.visualize(input_seq, output_seq)
